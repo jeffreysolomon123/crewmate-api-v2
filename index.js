@@ -1,14 +1,143 @@
-const express = require("express");
+import express from "express";
+import bodyParser from "body-parser";
+import cors from "cors";
+import axios from "axios";
+import bcrypt, { hash } from "bcrypt";
+import passport from "passport";
+import { Strategy as LocalStrategy } from "passport-local";
+import session from "express-session";
+import env from "dotenv";
+import { supabase } from "./utils/supabase.js";
+
 const app = express();
+const saltRounds = 10;
+env.config();
 
-app.get("/", (req, res) => {
-  res.send("Express on Vercel get owrking perfectly");
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false, // set to false so a session is not created until something is stored
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24,
+    },
+  })
+);
+
+app.use(express.urlencoded({ extended: true }));
+app.use(cors({ credentials: true, origin: "http://localhost:5173" })); // allow frontend to send cookies
+app.use(express.json());
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.post("/login", passport.authenticate("local"), (req, res) => {
+  res.sendStatus(200);
 });
 
-app.get("/test", (req, res) => {
-  res.json({ message: "test working perfectly" });
+passport.use(
+  new LocalStrategy(
+    { usernameField: "email", passwordField: "password" },
+    async (email, password, cb) => {
+      try {
+        const { data: user, error } = await supabase
+          .from("users")
+          .select("*")
+          .eq("email", email)
+          .single();
+
+        if (error || !user) {
+          return cb(null, false, { message: "No user found with that email" });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return cb(null, false, { message: "Incorrect password" });
+        }
+
+        return cb(null, user); // Login success
+      } catch (err) {
+        return cb(err);
+      }
+    }
+  )
+);
+
+app.post("/signup", async (req, res) => {
+  const { name, email, password, skills } = req.body;
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("email")
+      .eq("email", email)
+      .single();
+
+    console.log(data);
+    if (data) {
+      console.log("user already exists");
+      return res.status(400).send("User with this email already exists!");
+    } else {
+      console.log("welcome new user");
+      bcrypt.hash(password, saltRounds, async (error, hash) => {
+        if (error) {
+          console.log("Error hasing the password: ", error);
+        } else {
+          const { data, error } = await supabase
+            .from("users")
+            .insert({
+              name: name,
+              email: email,
+              password: hash,
+              skills: skills,
+            })
+            .select();
+          const user = data[0];
+          console.log("Signup successful : ", user);
+        }
+      });
+    }
+  } catch (error) {
+    console.log(error);
+  }
 });
 
-app.listen(3000, () => console.log("Server ready on port 3000."));
+//Check if user is authenticated
+app.get("/auth/check", (req, res) => {
+  if (req.isAuthenticated()) {
+    res.json({
+      authenticated: true,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+      },
+    });
+  } else {
+    res.json({ authenticated: false });
+  }
+});
 
-module.exports = app;
+// Serialize user by ID
+passport.serializeUser((user, cb) => {
+  cb(null, user.id); // Store only user ID in session
+});
+
+// Deserialize user by ID
+passport.deserializeUser(async (id, cb) => {
+  try {
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !user) {
+      return cb(new Error("User not found"));
+    }
+
+    cb(null, user); // Attach full user object to req.user
+  } catch (err) {
+    cb(err);
+  }
+});
+
+app.listen(3000, () => console.log("Server running on port 3000."));
