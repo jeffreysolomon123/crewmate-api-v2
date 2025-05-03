@@ -51,6 +51,12 @@ app.post("/newproject", async (req, res) => {
   }
 });
 
+app.get("/test", (req, res) => {
+  res.json({
+    message: "working finely",
+  });
+});
+
 app.post("/fetchuserprojects", async (req, res) => {
   const userId = req.body.userId;
 
