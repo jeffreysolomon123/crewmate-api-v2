@@ -27,9 +27,25 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: true }));
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://crewmate-neon.vercel.app",
+];
+
 app.use(
-  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app" })
-); // allow frontend to send cookies
+  cors({
+    credentials: true,
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+  })
+);
+
 app.use(express.json());
 
 app.use(passport.initialize());
