@@ -28,7 +28,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: true }));
 app.use(
-  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app/" })
+  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app" })
 ); // allow frontend to send cookies
 app.use(express.json());
 
