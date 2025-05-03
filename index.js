@@ -17,61 +17,22 @@ app.use(
   session({
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: false, // set to false so a session is not created until something is stored
     cookie: {
       maxAge: 1000 * 60 * 60 * 24,
-      secure: true, // cookie only works on HTTPS
-      sameSite: "None", // required for cross-origin cookies
     },
   })
 );
 
 app.use(express.urlencoded({ extended: true }));
-
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://crewmate-neon.vercel.app",
-];
-
-app.use(
-  cors({
-    credentials: true,
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-  })
-);
-
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  next();
-});
-
+app.use(cors({ credentials: true, origin: "http://localhost:5173" })); // allow frontend to send cookies
 app.use(express.json());
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.post("/login", (req, res, next) => {
-  passport.authenticate("local", (err, user, info) => {
-    if (err) return next(err);
-    if (!user) return res.status(401).json({ message: info.message });
-
-    req.logIn(user, (err) => {
-      if (err) return next(err);
-      return res.status(200).json({
-        message: "Login successful",
-        user: {
-          id: user.id,
-          email: user.email,
-        },
-      });
-    });
-  })(req, res, next);
+app.post("/login", passport.authenticate("local"), (req, res) => {
+  res.sendStatus(200);
 });
 
 app.post("/newproject", async (req, res) => {
@@ -94,6 +55,49 @@ app.get("/test", (req, res) => {
   res.json({
     message: "working finely",
   });
+});
+
+app.get("/project/:id", async (req, res) => {
+  const projectId = req.params.id;
+
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, title, description, userId")
+      .eq("id", projectId)
+      .single(); // returns a single object instead of an array
+
+    if (error) {
+      console.error("Error fetching project:", error);
+      return res.status(500).json({ message: "Failed to fetch project" });
+    }
+
+    if (!data) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    res.json({ project: data });
+  } catch (err) {
+    console.error("Unexpected error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.get("/fetchprojects", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, title, description")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(200).json({ projects: data });
+  } catch (error) {
+    console.log(error);
+  }
 });
 
 app.post("/fetchuserprojects", async (req, res) => {
@@ -194,6 +198,18 @@ app.get("/auth/check", (req, res) => {
   } else {
     res.json({ authenticated: false });
   }
+});
+
+app.post("/logout", (req, res, next) => {
+  req.logout(function (error) {
+    if (error) return next(error);
+
+    req.session.destroy(() => {
+      res.clearCookie("connect.sid");
+      res.sendStatus(200);
+      console.log("logged out successfully!");
+    });
+  });
 });
 
 // Serialize user by ID
