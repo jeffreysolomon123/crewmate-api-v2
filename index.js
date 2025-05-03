@@ -46,19 +46,32 @@ app.use(
   })
 );
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  next();
+});
+
 app.use(express.json());
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.post("/login", passport.authenticate("local"), (req, res) => {
-  res.status(200).json({
-    message: "Login successful",
-    user: {
-      id: req.user.id,
-      email: req.user.email,
-    },
-  });
+app.post("/login", (req, res, next) => {
+  passport.authenticate("local", (err, user, info) => {
+    if (err) return next(err);
+    if (!user) return res.status(401).json({ message: info.message });
+
+    req.logIn(user, (err) => {
+      if (err) return next(err);
+      return res.status(200).json({
+        message: "Login successful",
+        user: {
+          id: user.id,
+          email: user.email,
+        },
+      });
+    });
+  })(req, res, next);
 });
 
 app.post("/newproject", async (req, res) => {
