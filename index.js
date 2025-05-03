@@ -35,6 +35,42 @@ app.post("/login", passport.authenticate("local"), (req, res) => {
   res.sendStatus(200);
 });
 
+app.post("/newproject", async (req, res) => {
+  //console.log(req.body);
+  const title = req.body.title;
+  const description = req.body.description;
+  const userId = req.body.userId;
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .insert({ title: title, description: description, userId: userId });
+    console.log("Submitted project!");
+    res.sendStatus(200);
+  } catch (error) {
+    console.log(error);
+  }
+});
+
+app.post("/fetchuserprojects", async (req, res) => {
+  const userId = req.body.userId;
+
+  try {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, title")
+      .eq("userId", userId);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(200).json({ projects: data });
+  } catch (err) {
+    console.error("Unexpected error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 passport.use(
   new LocalStrategy(
     { usernameField: "email", passwordField: "password" },
@@ -64,7 +100,7 @@ passport.use(
 );
 
 app.post("/signup", async (req, res) => {
-  const { name, email, password, skills } = req.body;
+  const { name, email, password } = req.body;
   try {
     const { data, error } = await supabase
       .from("users")
@@ -88,7 +124,6 @@ app.post("/signup", async (req, res) => {
               name: name,
               email: email,
               password: hash,
-              skills: skills,
             })
             .select();
           const user = data[0];
