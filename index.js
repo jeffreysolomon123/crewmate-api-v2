@@ -17,22 +17,32 @@ app.use(
   session({
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: false, // set to false so a session is not created until something is stored
+    saveUninitialized: false,
     cookie: {
       maxAge: 1000 * 60 * 60 * 24,
+      secure: true, // cookie only works on HTTPS
+      sameSite: "None", // required for cross-origin cookies
     },
   })
 );
 
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ credentials: true, origin: "http://localhost:5173" })); // allow frontend to send cookies
+app.use(
+  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app/" })
+); // allow frontend to send cookies
 app.use(express.json());
 
 app.use(passport.initialize());
 app.use(passport.session());
 
 app.post("/login", passport.authenticate("local"), (req, res) => {
-  res.sendStatus(200);
+  res.status(200).json({
+    message: "Login successful",
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+    },
+  });
 });
 
 app.post("/newproject", async (req, res) => {
