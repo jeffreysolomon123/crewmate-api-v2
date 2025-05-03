@@ -100,6 +100,14 @@ app.get("/fetchprojects", async (req, res) => {
   }
 });
 
+app.post("/getname", async (req, res) => {
+  try {
+    console.log(req.body);
+  } catch (error) {
+    console.log(error);
+  }
+});
+
 app.post("/fetchuserprojects", async (req, res) => {
   const userId = req.body.userId;
 
