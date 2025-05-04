@@ -8,37 +8,124 @@ import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import env from "dotenv";
 import { supabase } from "./utils/supabase.js";
+import RedisStore from "connect-redis";
+import { createClient } from "redis";
 
 const app = express();
 const saltRounds = 10;
 env.config();
 
+// Initialize Redis client
+let redisClient = createClient({
+  url: process.env.REDIS_URL || "redis://localhost:6379",
+});
+
+redisClient.connect().catch(console.error);
+
+redisClient.on("error", (err) => {
+  console.log("Redis error:", err);
+});
+
+redisClient.on("connect", () => {
+  console.log("Connected to Redis");
+});
+
+// Initialize Redis store
+const redisStore = new RedisStore({
+  client: redisClient,
+  prefix: "crewmate:",
+});
+
+// Session middleware with Redis store
 app.use(
   session({
+    store: redisStore,
     secret: process.env.SESSION_SECRET,
     resave: false,
-    saveUninitialized: false, // set to false so a session is not created until something is stored
+    saveUninitialized: false,
     cookie: {
-      maxAge: 1000 * 60 * 60 * 24,
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
     },
   })
 );
 
 app.use(express.urlencoded({ extended: true }));
 app.use(
-  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app" })
-); // allow frontend to send cookies
+  cors({
+    credentials: true,
+    origin: [
+      "https://crewmate-neon.vercel.app",
+      "http://localhost:3000", // for local testing
+    ],
+  })
+);
 app.use(express.json());
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.post("/login", passport.authenticate("local"), (req, res) => {
-  res.sendStatus(200);
+// Passport serialization/deserialization with logging
+passport.serializeUser((user, cb) => {
+  console.log("Serializing user:", user.id);
+  cb(null, user.id);
 });
 
+passport.deserializeUser(async (id, cb) => {
+  console.log("Deserializing user:", id);
+  try {
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !user) {
+      console.log("User not found during deserialization");
+      return cb(new Error("User not found"));
+    }
+
+    console.log("Deserialized user:", user.email);
+    cb(null, user);
+  } catch (err) {
+    console.log("Deserialization error:", err);
+    cb(err);
+  }
+});
+
+// Enhanced login route with better error handling
+app.post("/login", (req, res, next) => {
+  passport.authenticate("local", (err, user, info) => {
+    if (err) {
+      console.error("Authentication error:", err);
+      return next(err);
+    }
+    if (!user) {
+      console.log("Login failed:", info?.message);
+      return res.status(401).json({ message: info?.message || "Login failed" });
+    }
+    req.logIn(user, (err) => {
+      if (err) {
+        console.error("Login error:", err);
+        return next(err);
+      }
+      console.log("Login successful for:", user.email);
+      return res.json({
+        message: "Login successful",
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+        },
+      });
+    });
+  })(req, res, next);
+});
+
+// All your existing routes remain the same from here...
 app.post("/newproject", async (req, res) => {
-  //console.log(req.body);
   const title = req.body.title;
   const description = req.body.description;
   const userId = req.body.userId;
@@ -50,6 +137,7 @@ app.post("/newproject", async (req, res) => {
     res.sendStatus(200);
   } catch (error) {
     console.log(error);
+    res.status(500).json({ error: "Failed to create project" });
   }
 });
 
@@ -67,7 +155,7 @@ app.get("/project/:id", async (req, res) => {
       .from("projects")
       .select("id, title, description, userId")
       .eq("id", projectId)
-      .single(); // returns a single object instead of an array
+      .single();
 
     if (error) {
       console.error("Error fetching project:", error);
@@ -99,12 +187,12 @@ app.get("/fetchprojects", async (req, res) => {
     res.status(200).json({ projects: data });
   } catch (error) {
     console.log(error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-//Delete post
 app.delete("/delete/:id", async (req, res) => {
-  const user = req.user; // Make sure Passport or session middleware is in place
+  const user = req.user;
   const projectId = req.params.id;
 
   if (!user) {
@@ -144,7 +232,6 @@ app.delete("/delete/:id", async (req, res) => {
   }
 });
 
-//Message route
 app.post("/messagepost", async (req, res) => {
   const user = req.user;
   if (!user) {
@@ -173,7 +260,6 @@ app.post("/messagepost", async (req, res) => {
   }
 });
 
-//Fetch user Messages
 app.post("/getmessages", async (req, res) => {
   const user = req.user;
   if (!user) {
@@ -198,10 +284,9 @@ app.post("/getmessages", async (req, res) => {
   }
 });
 
-// GET the project details for editing
 app.get("/edit/:id", async (req, res) => {
   const projectId = req.params.id;
-  const user = req.user; // assuming you're using a session/passport middleware
+  const user = req.user;
 
   if (!user) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -218,7 +303,6 @@ app.get("/edit/:id", async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
 
-    // Only allow owner to edit
     if (project.userId !== user.id) {
       return res.status(403).json({ error: "Forbidden" });
     }
@@ -230,7 +314,6 @@ app.get("/edit/:id", async (req, res) => {
   }
 });
 
-// PUT to update the project
 app.put("/edit/:id", async (req, res) => {
   const projectId = req.params.id;
   const { title, description } = req.body;
@@ -253,12 +336,11 @@ app.post("/getname", async (req, res) => {
   try {
     const projectId = req.body.projectId;
 
-    // Get userId from projects table
     const { data: projectData, error: projectError } = await supabase
       .from("projects")
       .select("userId")
       .eq("id", projectId)
-      .single(); // ensures you get one object, not an array
+      .single();
 
     if (projectError || !projectData) {
       return res
@@ -268,12 +350,11 @@ app.post("/getname", async (req, res) => {
 
     const projectUserId = projectData.userId;
 
-    // Now get name and email from users table
     const { data: userData, error: userError } = await supabase
       .from("users")
       .select("name, email,id")
       .eq("id", projectUserId)
-      .single(); // ensures one user
+      .single();
 
     if (userError || !userData) {
       return res
@@ -328,7 +409,7 @@ passport.use(
           return cb(null, false, { message: "Incorrect password" });
         }
 
-        return cb(null, user); // Login success
+        return cb(null, user);
       } catch (err) {
         return cb(err);
       }
@@ -345,7 +426,6 @@ app.post("/signup", async (req, res) => {
       .eq("email", email)
       .single();
 
-    console.log(data);
     if (data) {
       console.log("user already exists");
       return res.status(400).send("User with this email already exists!");
@@ -353,7 +433,8 @@ app.post("/signup", async (req, res) => {
       console.log("welcome new user");
       bcrypt.hash(password, saltRounds, async (error, hash) => {
         if (error) {
-          console.log("Error hasing the password: ", error);
+          console.log("Error hashing the password: ", error);
+          return res.status(500).json({ error: "Error creating user" });
         } else {
           const { data, error } = await supabase
             .from("users")
@@ -363,17 +444,24 @@ app.post("/signup", async (req, res) => {
               password: hash,
             })
             .select();
+
+          if (error) {
+            console.log("Supabase error:", error);
+            return res.status(500).json({ error: "Error creating user" });
+          }
+
           const user = data[0];
-          console.log("Signup successful : ", user);
+          console.log("Signup successful:", user);
+          return res.status(200).json({ message: "Signup successful", user });
         }
       });
     }
   } catch (error) {
     console.log(error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-//Check if user is authenticated
 app.get("/auth/check", (req, res) => {
   if (req.isAuthenticated()) {
     res.json({
@@ -401,28 +489,5 @@ app.post("/logout", (req, res, next) => {
   });
 });
 
-// Serialize user by ID
-passport.serializeUser((user, cb) => {
-  cb(null, user.id); // Store only user ID in session
-});
-
-// Deserialize user by ID
-passport.deserializeUser(async (id, cb) => {
-  try {
-    const { data: user, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !user) {
-      return cb(new Error("User not found"));
-    }
-
-    cb(null, user); // Attach full user object to req.user
-  } catch (err) {
-    cb(err);
-  }
-});
-
-app.listen(3000, () => console.log("Server running on port 3000."));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}.`));
