@@ -102,9 +102,40 @@ app.get("/fetchprojects", async (req, res) => {
 
 app.post("/getname", async (req, res) => {
   try {
-    console.log(req.body);
+    const projectId = req.body.projectId;
+
+    // Get userId from projects table
+    const { data: projectData, error: projectError } = await supabase
+      .from("projects")
+      .select("userId")
+      .eq("id", projectId)
+      .single(); // ensures you get one object, not an array
+
+    if (projectError || !projectData) {
+      return res
+        .status(500)
+        .json({ error: projectError?.message || "Project not found" });
+    }
+
+    const projectUserId = projectData.userId;
+
+    // Now get name and email from users table
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("name, email")
+      .eq("id", projectUserId)
+      .single(); // ensures one user
+
+    if (userError || !userData) {
+      return res
+        .status(500)
+        .json({ error: userError?.message || "User not found" });
+    }
+
+    res.status(200).json({ projectUserDetails: userData });
   } catch (error) {
-    console.log(error);
+    console.error("Server error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
