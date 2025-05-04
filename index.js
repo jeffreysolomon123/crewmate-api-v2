@@ -25,7 +25,9 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ credentials: true, origin: "http://localhost:5173" })); // allow frontend to send cookies
+app.use(
+  cors({ credentials: true, origin: "https://crewmate-neon.vercel.app" })
+); // allow frontend to send cookies
 app.use(express.json());
 
 app.use(passport.initialize());
@@ -100,6 +102,153 @@ app.get("/fetchprojects", async (req, res) => {
   }
 });
 
+//Delete post
+app.delete("/delete/:id", async (req, res) => {
+  const user = req.user; // Make sure Passport or session middleware is in place
+  const projectId = req.params.id;
+
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const { data: project, error: fetchError } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
+      .single();
+
+    if (fetchError || !project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    if (project.userId !== user.id) {
+      return res
+        .status(403)
+        .json({ error: "Forbidden: You are not the owner." });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("projects")
+      .delete()
+      .eq("id", projectId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    res.json({ message: "Project deleted successfully." });
+  } catch (err) {
+    console.error("Delete error:", err);
+    res.status(500).json({ error: "Server error while deleting project." });
+  }
+});
+
+//Message route
+app.post("/messagepost", async (req, res) => {
+  const user = req.user;
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const { data, error } = await supabase.from("messages").insert({
+      message: req.body.message,
+      senderId: req.body.senderId,
+      receiverId: req.body.receiverId,
+      senderEmail: req.body.senderEmail,
+      projectId: req.body.projectId,
+      senderName: req.body.senderName,
+    });
+
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    return res.status(200).json({ message: "Message sent successfully" });
+  } catch (error) {
+    console.log("Server error while sending message", error);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+//Fetch user Messages
+app.post("/getmessages", async (req, res) => {
+  const user = req.user;
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("message, senderEmail, senderName")
+      .eq("receiverId", req.body.userId);
+
+    if (error) {
+      console.error("Supabase retrieve error:", error);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    return res.status(200).json({ Messages: data });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET the project details for editing
+app.get("/edit/:id", async (req, res) => {
+  const projectId = req.params.id;
+  const user = req.user; // assuming you're using a session/passport middleware
+
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const { data: project, error } = await supabase
+      .from("projects")
+      .select("id, title, description, userId")
+      .eq("id", projectId)
+      .single();
+
+    if (error || !project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    // Only allow owner to edit
+    if (project.userId !== user.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    res.json({ project });
+  } catch (err) {
+    console.error("Error fetching project:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT to update the project
+app.put("/edit/:id", async (req, res) => {
+  const projectId = req.params.id;
+  const { title, description } = req.body;
+
+  try {
+    const { error } = await supabase
+      .from("projects")
+      .update({ title, description })
+      .eq("id", projectId);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.status(200).json({ message: "Project updated successfully" });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.post("/getname", async (req, res) => {
   try {
     const projectId = req.body.projectId;
@@ -122,7 +271,7 @@ app.post("/getname", async (req, res) => {
     // Now get name and email from users table
     const { data: userData, error: userError } = await supabase
       .from("users")
-      .select("name, email")
+      .select("name, email,id")
       .eq("id", projectUserId)
       .single(); // ensures one user
 
@@ -145,7 +294,7 @@ app.post("/fetchuserprojects", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("projects")
-      .select("id, title")
+      .select("id, title , description")
       .eq("userId", userId);
 
     if (error) {
@@ -232,6 +381,7 @@ app.get("/auth/check", (req, res) => {
       user: {
         id: req.user.id,
         email: req.user.email,
+        name: req.user.name,
       },
     });
   } else {
