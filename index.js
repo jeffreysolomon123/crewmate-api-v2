@@ -67,6 +67,14 @@ app.use(express.json());
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    redis: redisClient.isReady ? "connected" : "disconnected",
+    time: new Date().toISOString(),
+  });
+});
+
 // Passport serialization/deserialization with logging
 passport.serializeUser((user, cb) => {
   console.log("Serializing user:", user.id);
